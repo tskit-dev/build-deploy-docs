@@ -1,0 +1,105 @@
+name: Build and deploy docs
+description: Build docs and deploy to github pages under the PR number or tag name
+inputs:
+  build-gsl:
+    description: Should GSL be installed
+    required: false
+    default: false
+  requirements-file:
+    description: Location of the requirements file
+    required: false
+    default: "requirements/docs.txt"
+  committer-name:
+    description: git user.name of docs commiter
+    required: false
+    default: "AdminBOT"
+  committer-email:
+    description: git user.email of docs commiter
+    required: true
+  committer-token:
+    description: access token for docs committer
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cancel Previous Runs
+      uses: styfle/cancel-workflow-action@0.6.0
+      with:
+        access_token: ${{ github.token }}
+
+    - uses: actions/checkout@v2
+      # As we are using pull-request-target which uses the workflow from the base
+      # of the PR, we need to be specific
+      with:
+          ref: ${{github.event.pull_request.head.ref}}
+          repository: ${{github.event.pull_request.head.repo.full_name}}
+          submodules: true
+
+    - uses: actions/setup-python@v1
+      with:
+        python-version: 3.8
+
+    - name: Install GSL
+      if: ${{ inputs.build-gsl }}
+      run: sudo apt-get install -y libgsl0-dev
+
+    - name: Install python-deps
+      run: |
+        python -m pip install wheel
+        python -m pip install -r ${{ inputs.requirements-file }}
+
+    - name: Build C module
+      run: make cmodule
+
+    - name: Build Docs
+      run: make -C docs
+
+    - name: Checkout docs site
+      if: github.repository_owner == ${{github.event.pull_request.base.user.login}}
+      uses: actions/checkout@v2
+      with:
+        repository: ${{ inputs.docs-repo-owner }}/${{ inputs.docs-repo-name}}
+        token: ${{ inputs.committer-token }}
+        path: ${{ inputs.docs-repo-name}}
+
+    - name: Check for diff
+      if: github.repository_owner == ${{github.event.pull_request.base.user.login}}
+      id: diff
+      #The html contains commit hashes which we don't want to count as a change
+      run: |
+        diff -x .buildinfo -r ${{ inputs.docs-repo-name}}/main docs/_build/html | grep "^[<>]" | grep -v "<title>\|VERSION:" | grep . && echo "::set-output name=change_detected::true" || echo "NO CHANGES"
+
+    - name: Copy our docs to the PR specific location
+      if: github.repository_owner == ${{github.event.pull_request.base.user.login}} && github.event.pull_request && steps.diff.outputs.change_detected
+      run: |
+        cd ${{ inputs.docs-repo-name}}
+        rm -rf ${{github.event.pull_request.number}}
+        cp -r ../docs/_build/html ${{github.event.pull_request.number}}
+
+    - name: Copy our docs to the tag specific location
+      if: github.repository_owner == ${{github.event.pull_request.base.user.login}} && !github.event.pull_request
+      run: |
+        cd ${{ inputs.docs-repo-name}}
+        export DEST=`echo ${GITHUB_REF} | sed -e "s/refs\/heads\///g" |  sed -e "s/refs\/tags\///g"`
+        rm -rf $DEST
+        cp -r ../docs/_build/html $DEST
+
+    - name: Commit and push the docs
+      if: github.repository_owner == ${{github.event.pull_request.base.user.login}} && (steps.diff.outputs.change_detected || (!github.event.pull_request))
+      run: |
+        cd ${{ inputs.docs-repo-name}}
+        git config user.name ${{inputs.committer-name}}
+        git config user.email ${{inputs.committer-email}}
+        git add .
+        git diff-index --quiet HEAD || git commit -m "Automated doc build for ${{github.event.pull_request.number}} ${GITHUB_REF}"
+        git push
+
+    - name: Comment on PR
+      if: github.repository_owner == ${{github.event.pull_request.base.user.login}} && github.event.pull_request && steps.diff.outputs.change_detected
+      uses: mshick/add-pr-comment@v1
+      with:
+        message: |
+          📖 Docs for this PR can be previewed [here](https://$${{ inputs.docs-repo-owner}}.github.io/${{ inputs.docs-repo-name}}/${{github.event.pull_request.number}}/)
+        allow-repeats: false
+        repo-token: ${{ inputs.committer-token }}
