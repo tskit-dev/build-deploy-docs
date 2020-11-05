@@ -1,0 +1,33 @@
+name: Docs
+on:
+  pull_request:
+  pull_request_target:
+  push:
+    branches: [main]
+    tags:
+      - '*'
+jobs:
+  build-deploy-docs:
+    name: Build
+    runs-on: ubuntu-18.04
+    steps:
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.6.0
+        with:
+          access_token: ${{ github.token }}
+
+      - uses: actions/checkout@v2
+        # As we are using pull-request-target which uses the workflow from the base
+        # of the PR, we need to be specific
+        with:
+            ref: ${{github.event.pull_request.head.ref}}
+            repository: ${{github.event.pull_request.head.repo.full_name}}
+            submodules: true
+
+      - uses: tskit-dev/build-deploy-docs@main
+        with:
+          build-gsl: true
+          # Use default # requirements-file:
+          # Use default # committer-name:
+          committer-email: ben.jeffery.well+adminbot@gmail.com
+          commiter-token: ${{ secrets.ADMINBOT_TOKEN }}
