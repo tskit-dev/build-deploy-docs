@@ -1,3 +1,5 @@
+NOT TO BE USED FOR NOW DUE TO SECURITY ISSUES
+
 name: Build and deploy docs
 description: Build docs and deploy to github pages under the PR number or tag name
 inputs:
